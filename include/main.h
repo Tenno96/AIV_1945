@@ -16,7 +16,6 @@ typedef struct ScrollableObject
     int posX;
     int posY;
     Texture2D* texture;
-    float speed;
 }ScrollableObject;
 
 typedef struct Animation2D
@@ -33,7 +32,10 @@ typedef struct GameObject
     bool isActive;
     Vector2 pos;
     Vector2 pivotOffset;
+    Vector2 velocityNomalize;
     Texture2D* texture;
+    int width;
+    int height;
     Animation2D anim;
     float speed;
     unsigned char collisionMask;
@@ -51,7 +53,7 @@ typedef struct Widget
 {
     int posX;
     int posY;
-    Texture2D texture;
+    Texture2D* texture;
 }Widget;
 
 
@@ -86,13 +88,16 @@ void PlayerFire();
 
 void SetPosition(GameObject* object, Vector2 newPos);
 Vector2 GetPositionWithOffest(GameObject* object);
-GameObject* CreatePlayerBulletArray(int size, Texture2D texture);
+GameObject* CreatePlayerBulletArray(int size, Texture2D* texture);
 GameObject* GetAvailableGameobject(GameObject* objects, int poolSize);
 bool IsOutOfBounds(GameObject* object);
 
 
 // Enemy
 
-GameObject* CreateEnemy(int size, Texture2D texture);
+GameObject* CreateEnemies(int size, Texture2D* texture);
+
+// Math
+Vector2 NomalizeVector2(Vector2* vector);
 
 #endif // MAIN_H

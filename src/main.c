@@ -1,6 +1,12 @@
 #include "main.h"
 
 #include <stdlib.h>
+#include <math.h>
+
+
+#define MAX_PLAYER_BULLET_POOL 20
+#define MAX_ENEMIES_POOL 20
+#define SCROLLING_BACKGROUND_SPEED 80.0f
 
 //------------------------------------------------------------------------------------
 // Global Variables Declaration
@@ -12,9 +18,19 @@ static int screenHeight = 480;
 static Texture2D backgroundTexture2D;
 static Texture2D playerTexture2D;
 static Texture2D playerBulletTexture2D;
+static Texture2D bottomTexture2D;
+static Texture2D enemy1Texture2D;
 
 static GameObject player;
 static GameObject* playerBullets;
+static GameObject* enemies;
+
+static ScrollableObject background1;
+static ScrollableObject background2;
+
+static Widget bottomUI;
+
+static Music backgroundMC;
 
 
 int main(void)
@@ -40,39 +56,42 @@ void InitGame()
     backgroundTexture2D = LoadTexture("assets/map/water.png");
     playerTexture2D = LoadTexture("assets/player/myplane_strip3.png");
     playerBulletTexture2D = LoadTexture("assets/player/bullet.png");
+    enemy1Texture2D = LoadTexture("assets/enemy/enemy1_strip3.png");
+    bottomTexture2D = LoadTexture("assets/ui/bottom.png");
+
+    background1.texture = &backgroundTexture2D;
+    background1.posX = 0;
+    background1.posY = 0;
+
+    background2 = background1; 
+    background2.posY -= GetScreenHeight();
 
     player.texture = &playerTexture2D;
     player.pos = (Vector2){ GetScreenWidth() * 0.5f, GetScreenHeight() * 0.5f };
     player.pivotOffset = (Vector2){(float)playerTexture2D.height  * 0.5f, (float)playerTexture2D.height * 0.5f};
+    player.velocityNomalize = (Vector2){0, 0};
+    player.width = 65;
+    player.height = 65;
     player.anim = CreateAnimation2D(3, 8, true);
     player.speed = 150.0f;
     player.collisionType = Player;
     AddCollisionType(&player, Enemy);
     AddCollisionType(&player, EnemyBullet);
+
+    playerBullets = CreatePlayerBulletArray(MAX_PLAYER_BULLET_POOL, &playerBulletTexture2D);
+    enemies = CreateEnemies(MAX_ENEMIES_POOL, &enemy1Texture2D);
+
+    bottomUI.texture = &bottomTexture2D;
+    bottomUI.posX = 0;
+    bottomUI.posY = GetScreenHeight() - bottomUI.texture->height;
+
+    backgroundMC = LoadMusicStream("assets/audio/background.mp3");
+    PlayMusicStream(backgroundMC);
+    SetMusicVolume(backgroundMC, 0.25f);
 }
 
 void GameLoop()
-{
-    ScrollableObject background;
-    background.texture = &backgroundTexture2D;
-    background.posX = 0;
-    background.posY = 0;
-    background.speed = 80.0f;
-
-    ScrollableObject background2 = background; 
-    background2.posY -= GetScreenHeight();
-
-    playerBullets = CreatePlayerBulletArray(20, playerBulletTexture2D);
-
-    Widget bottomUI;
-    bottomUI.texture = LoadTexture("assets/ui/bottom.png");
-    bottomUI.posX = 0;
-    bottomUI.posY = GetScreenHeight() - bottomUI.texture.height;
-
-    // Music backgroundMC = LoadMusicStream("assets/audio/background.mp3");
-    // PlayMusicStream(backgroundMC);
-    // SetMusicVolume(backgroundMC, 0.25f);
-
+{  
     while (!WindowShouldClose())
     {
         // INPUT
@@ -81,24 +100,32 @@ void GameLoop()
         if (IsKeyPressed(KEY_SPACE))
         {
             TraceLog(LOG_INFO, "Pressed fire button!");
-            GameObject* bullet = GetAvailableGameobject(playerBullets, 15);
+            GameObject* bullet = GetAvailableGameobject(playerBullets, MAX_PLAYER_BULLET_POOL);
             bullet->pos = player.pos;
             bullet->pos.y -= player.pivotOffset.y;
         }
 
+        if (IsKeyPressed(KEY_E))
+        {
+            TraceLog(LOG_INFO, "Pressed spawn enemy button!");
+            GameObject* enemy = GetAvailableGameobject(enemies, MAX_ENEMIES_POOL);
+            enemy->pos.x = GetRandomValue(50, GetScreenWidth() - 50);
+            enemy->pos.y = -40.f;
+        }
+
         // UPDATE
 
-        // if (IsMusicStreamPlaying(backgroundMC))
-        // {
-        //     UpdateMusicStream(backgroundMC);
-        // }
-
-        background.posY += (int)(GetFrameTime() * 80.0f);
-        background2.posY += (int)(GetFrameTime() * 80.0f);
-
-        if (background.posY > GetScreenHeight())
+        if (IsMusicStreamPlaying(backgroundMC))
         {
-            background.posY -= GetScreenHeight() * 2;
+            UpdateMusicStream(backgroundMC);
+        }
+
+        background1.posY += (int)(GetFrameTime() * SCROLLING_BACKGROUND_SPEED);
+        background2.posY += (int)(GetFrameTime() * SCROLLING_BACKGROUND_SPEED);
+
+        if (background1.posY > GetScreenHeight())
+        {
+            background1.posY -= GetScreenHeight() * 2;
         }
 
         if (background2.posY > GetScreenHeight())
@@ -106,12 +133,13 @@ void GameLoop()
             background2.posY -= GetScreenHeight() * 2;
         }
 
-        player.pos.x += (inputDirection.x * player.speed) * GetFrameTime();
-        player.pos.y += (inputDirection.y * player.speed) * GetFrameTime();
+        player.velocityNomalize = NomalizeVector2(&inputDirection);
+        player.pos.x += (player.velocityNomalize.x * player.speed) * GetFrameTime();
+        player.pos.y += (player.velocityNomalize.y * player.speed) * GetFrameTime();
 
         FixPlayerPosition(&player);
 
-        for (int i = 0; i < 15; i++)
+        for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
         {
             if (playerBullets[i].isActive)
             {
@@ -123,9 +151,29 @@ void GameLoop()
             }
         }
 
+        for (int i = 0; i < MAX_ENEMIES_POOL; i++)
+        {
+            if (enemies[i].isActive)
+            {
+                enemies[i].pos.y += enemies[i].speed * GetFrameTime();
+                if (IsOutOfBounds(&enemies[i]))
+                {
+                    enemies[i].isActive = false;
+                }
+            }
+        }
+
         // ANIMATIONS
 
         UpdateAnimation2D(&player.anim);
+
+        for (int i = 0; i < MAX_ENEMIES_POOL; i++)
+        {
+            if (enemies[i].isActive)
+            {
+                UpdateAnimation2D(&enemies[i].anim);
+            }
+        }
 
         // PHYSICS        
 
@@ -136,16 +184,16 @@ void GameLoop()
             ClearBackground(BLACK);
 
             // Draw Background
-            DrawTiledArea(*background.texture, background.posX, background.posY, 20, 15);            
+            DrawTiledArea(*background1.texture, background1.posX, background1.posY, 20, 15);            
             DrawTiledArea(*background2.texture, background2.posX, background2.posY, 20, 15);
             
             // Draw MiddleBackground
 
             // Pawn
 
-            DrawTextureRec(*player.texture, (Rectangle){player.anim.currentFrame * 65, 0, 65, 65}, GetPositionWithOffest(&player), WHITE);
+            DrawTextureRec(*player.texture, (Rectangle){player.anim.currentFrame * player.width, 0, player.width, player.height}, GetPositionWithOffest(&player), WHITE);
 
-            for (int i = 0; i < 15; i++)
+            for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
             {
                 if (playerBullets[i].isActive)
                 {
@@ -153,11 +201,23 @@ void GameLoop()
                 }
             }
 
+            for (int i = 0; i < MAX_ENEMIES_POOL; i++)
+            {
+                if (enemies[i].isActive)
+                {
+                    DrawTextureRec(*enemies[i].texture, 
+                                    (Rectangle){enemies[i].anim.currentFrame * enemies->width, 0, enemies->width, enemies->height},
+                                    GetPositionWithOffest(&enemies[i]), 
+                                    WHITE);
+                }
+            }
+
+
             DrawCircle((int)(GetScreenWidth() * 0.5f), (int)(GetScreenHeight() * 0.5f), 5, RED);
 
             // HUD
 
-            DrawTexture(bottomUI.texture, bottomUI.posX, bottomUI.posY, WHITE);
+            DrawTexture(*bottomUI.texture, bottomUI.posX, bottomUI.posY, WHITE);
 
         EndDrawing();
     }
@@ -170,8 +230,13 @@ void UnloadGame()
     UnloadTexture(backgroundTexture2D);
     UnloadTexture(playerTexture2D);
     UnloadTexture(playerBulletTexture2D);
+    UnloadTexture(enemy1Texture2D);
+    UnloadTexture(bottomTexture2D);
+
+    UnloadMusicStream(backgroundMC);
 
     free(playerBullets);
+    free(enemies);
 }
 
 void ShoutDown()
@@ -266,7 +331,7 @@ Vector2 GetPositionWithOffest(GameObject* object)
     return (Vector2){ object->pos.x - object->pivotOffset.x, object->pos.y - object->pivotOffset.y };
 }
 
-GameObject* CreatePlayerBulletArray(int size, Texture2D texture)
+GameObject* CreatePlayerBulletArray(int size, Texture2D* texture)
 {
     GameObject* array = (GameObject*)malloc(size * sizeof(GameObject));
 
@@ -281,8 +346,8 @@ GameObject* CreatePlayerBulletArray(int size, Texture2D texture)
         GameObject* gameObject = &array[i];
         gameObject->pivotOffset = (Vector2){16, 16};
         gameObject->isActive = false;
-        gameObject->texture = &texture;
-        gameObject->speed = 400.0f;
+        gameObject->texture = texture;
+        gameObject->speed = 500.0f;
         gameObject->collisionType = PlayerBullet;
         AddCollisionType(gameObject, Enemy);
         AddCollisionType(gameObject, EnemyBullet);
@@ -330,7 +395,7 @@ GameObject* GetAvailableGameobject(GameObject* objects, int poolSize)
 bool IsOutOfBounds(GameObject* object)
 {  
     Vector2 pos_with_offset = GetPositionWithOffest(object);
-    if (pos_with_offset.y + object->pivotOffset.y >= 0 && pos_with_offset.y - object->pivotOffset.y <= GetScreenHeight() - 76)
+    if (pos_with_offset.y + object->pivotOffset.y >= -100 && pos_with_offset.y - object->pivotOffset.y <= GetScreenHeight() - 76)
     {
         return false;
     }
@@ -338,7 +403,7 @@ bool IsOutOfBounds(GameObject* object)
     return true;
 }
 
-GameObject* CreateEnemy(int size, Texture2D texture)
+GameObject* CreateEnemies(int size, Texture2D* texture)
 {
     GameObject* array = (GameObject*)malloc(size * sizeof(GameObject));
 
@@ -350,17 +415,32 @@ GameObject* CreateEnemy(int size, Texture2D texture)
 
     for (int i = 0; i < size; i++)
     {
-        GameObject gameObject;
-        gameObject.pivotOffset = (Vector2){16, 16};
-        gameObject.isActive = false;
-        gameObject.texture = &texture;
-        gameObject.speed = 400.0f;
-        gameObject.collisionType = Enemy;
-        AddCollisionType(&gameObject, Player);
-        AddCollisionType(&gameObject, PlayerBullet);
-
-        array[i] = gameObject;
+        GameObject* gameObject = &array[i];
+        gameObject->pivotOffset = (Vector2){16, 16};
+        gameObject->isActive = false;
+        gameObject->texture = texture;
+        gameObject->width = texture->width / 3;
+        gameObject->height = texture->height;
+        gameObject->anim = CreateAnimation2D(3, 8, true);
+        gameObject->speed = 100.0f;
+        gameObject->collisionType = Enemy;
+        AddCollisionType(gameObject, Player);
+        AddCollisionType(gameObject, PlayerBullet);
     }
 
     return array;
+}
+
+Vector2 NomalizeVector2(Vector2* vector)
+{
+    Vector2 vectorNomelaze = (Vector2){0, 0};
+    if (vector->x != 0 ||  vector->y != 0)
+    {
+        const float magnitude = (float)sqrt((vector->x * vector->x) +(vector->y * vector->y));
+        vectorNomelaze.x = vector->x / magnitude;
+        vectorNomelaze.y = vector->y / magnitude;
+    }
+
+
+    return vectorNomelaze;
 }
