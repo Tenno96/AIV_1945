@@ -3,10 +3,13 @@
 #include <stdlib.h>
 #include <math.h>
 
-
 #define MAX_PLAYER_BULLET_POOL 20
 #define MAX_ENEMIES_POOL 20
+#define MAX_ENEMY_BULLET_POOL 60
 #define SCROLLING_BACKGROUND_SPEED 80.0f
+
+#define MAX_PLAYER_ENERGY 100
+#define MAX_PLAYER_LIFE 3
 
 //------------------------------------------------------------------------------------
 // Global Variables Declaration
@@ -16,19 +19,34 @@ static int screenWidth = 640;
 static int screenHeight = 480;
 
 static Texture2D backgroundTexture2D;
+static Texture2D island1Texture2D;
+static Texture2D island2Texture2D;
+static Texture2D island3Texture2D;
 static Texture2D playerTexture2D;
 static Texture2D playerBulletTexture2D;
+static Texture2D playerLifeTexture2D;
 static Texture2D bottomTexture2D;
 static Texture2D enemy1Texture2D;
+static Texture2D enemyBulletTexture2D;
+
+static int playerEnergy;
+static int playerLife;
+static int playerScore;
 
 static GameObject player;
 static GameObject* playerBullets;
 static GameObject* enemies;
+static GameObject* enemyBullets;
 
 static ScrollableObject background1;
 static ScrollableObject background2;
 
-static Widget bottomUI;
+static ScrollableObject island;
+
+static TimerHandle spawnEnemy1TimerHandle;
+static TimerHandle islandTimerHandle;
+
+static WidgetBar healthBar;
 
 static Music backgroundMC;
 
@@ -43,7 +61,6 @@ int main(void)
     ChangeDirectory(GetApplicationDirectory());
     TraceLog(LOG_DEBUG, "Change directory to: %s", GetApplicationDirectory());
 
-
     InitGame();
     GameLoop();
     ShoutDown();
@@ -54,9 +71,14 @@ int main(void)
 void InitGame()
 {
     backgroundTexture2D = LoadTexture("assets/map/water.png");
+    island1Texture2D = LoadTexture("assets/map/island1.png");
+    island2Texture2D = LoadTexture("assets/map/island2.png");
+    island3Texture2D = LoadTexture("assets/map/island3.png");
     playerTexture2D = LoadTexture("assets/player/myplane_strip3.png");
     playerBulletTexture2D = LoadTexture("assets/player/bullet.png");
+    playerLifeTexture2D = LoadTexture("assets/ui/life.png");
     enemy1Texture2D = LoadTexture("assets/enemy/enemy1_strip3.png");
+    enemyBulletTexture2D = LoadTexture("assets/enemy/enemybullet1.png");
     bottomTexture2D = LoadTexture("assets/ui/bottom.png");
 
     background1.texture = &backgroundTexture2D;
@@ -66,10 +88,19 @@ void InitGame()
     background2 = background1; 
     background2.posY -= GetScreenHeight();
 
+    ResetIsland();
+
+    islandTimerHandle = (TimerHandle){0.0f, 10.0f, NULL};
+
+    playerEnergy = MAX_PLAYER_ENERGY;
+    playerLife = MAX_PLAYER_LIFE;
+    playerScore = 0;
+
+    player.isActive = true;
     player.texture = &playerTexture2D;
     player.pos = (Vector2){ GetScreenWidth() * 0.5f, GetScreenHeight() * 0.5f };
     player.pivotOffset = (Vector2){(float)playerTexture2D.height  * 0.5f, (float)playerTexture2D.height * 0.5f};
-    player.velocityNomalize = (Vector2){0, 0};
+    player.velocityDir = (Vector2){0, 0};
     player.width = 65;
     player.height = 65;
     player.anim = CreateAnimation2D(3, 8, true);
@@ -80,10 +111,14 @@ void InitGame()
 
     playerBullets = CreatePlayerBulletArray(MAX_PLAYER_BULLET_POOL, &playerBulletTexture2D);
     enemies = CreateEnemies(MAX_ENEMIES_POOL, &enemy1Texture2D);
+    enemyBullets = CreateEnemyBulletArray(MAX_ENEMY_BULLET_POOL, &enemyBulletTexture2D);
 
-    bottomUI.texture = &bottomTexture2D;
-    bottomUI.posX = 0;
-    bottomUI.posY = GetScreenHeight() - bottomUI.texture->height;
+    spawnEnemy1TimerHandle = (TimerHandle){0.0f, 2.0f, SpawnEnemy};
+
+    healthBar.posX = 11;
+    healthBar.posY = GetRenderHeight() - 26.f;
+    healthBar.percent = 1.0f;
+    healthBar.lengthBar = 128.0f;
 
     backgroundMC = LoadMusicStream("assets/audio/background.mp3");
     PlayMusicStream(backgroundMC);
@@ -95,31 +130,51 @@ void GameLoop()
     while (!WindowShouldClose())
     {
         // INPUT
-        Vector2 inputDirection = GetInputDirection();
-
-        if (IsKeyPressed(KEY_SPACE))
-        {
-            TraceLog(LOG_INFO, "Pressed fire button!");
-            GameObject* bullet = GetAvailableGameobject(playerBullets, MAX_PLAYER_BULLET_POOL);
-            bullet->pos = player.pos;
-            bullet->pos.y -= player.pivotOffset.y;
-        }
-
-        if (IsKeyPressed(KEY_E))
-        {
-            TraceLog(LOG_INFO, "Pressed spawn enemy button!");
-            GameObject* enemy = GetAvailableGameobject(enemies, MAX_ENEMIES_POOL);
-            enemy->pos.x = GetRandomValue(50, GetScreenWidth() - 50);
-            enemy->pos.y = -40.f;
-        }
+        
+        HandlePlayerInput();
 
         // UPDATE
+        
+        UpdateGame();
 
-        if (IsMusicStreamPlaying(backgroundMC))
-        {
-            UpdateMusicStream(backgroundMC);
-        }
+        // PHYSICS
 
+        UpdatePhysics();
+
+        // DRAW
+
+        DrawGame();
+    }
+
+
+}
+
+void HandlePlayerInput()
+{
+    Vector2 inputDirection = GetInputDirection();
+    player.velocityDir = NomalizeVector2(&inputDirection);
+    
+    if (IsKeyPressed(KEY_SPACE))
+    {
+        TraceLog(LOG_INFO, "Pressed fire button!");
+        GameObject* bullet = GetAvailableGameobject(playerBullets, MAX_PLAYER_BULLET_POOL);
+        bullet->pos = player.pos;
+        bullet->pos.y -= player.pivotOffset.y;
+    }
+
+}
+
+void UpdateGame()
+{
+      // MUSIC
+
+        // if (IsMusicStreamPlaying(backgroundMC))
+        // {
+        //     UpdateMusicStream(backgroundMC);
+        // }
+        
+        // BACKGROUND 
+        
         background1.posY += (int)(GetFrameTime() * SCROLLING_BACKGROUND_SPEED);
         background2.posY += (int)(GetFrameTime() * SCROLLING_BACKGROUND_SPEED);
 
@@ -133,17 +188,28 @@ void GameLoop()
             background2.posY -= GetScreenHeight() * 2;
         }
 
-        player.velocityNomalize = NomalizeVector2(&inputDirection);
-        player.pos.x += (player.velocityNomalize.x * player.speed) * GetFrameTime();
-        player.pos.y += (player.velocityNomalize.y * player.speed) * GetFrameTime();
+        island.posY += (int)(GetFrameTime() * SCROLLING_BACKGROUND_SPEED);
+
+        islandTimerHandle.timer += GetFrameTime();
+        if (islandTimerHandle.timer >= islandTimerHandle.interval)
+        {
+            islandTimerHandle.timer = 0;
+            ResetIsland();
+        }
+
+        // PLAYER
+        player.pos.x += (player.velocityDir.x * player.speed) * GetFrameTime();
+        player.pos.y += (player.velocityDir.y * player.speed) * GetFrameTime();
 
         FixPlayerPosition(&player);
+
+        // PLAYER_BULLETS, ENEMIES AND ENEMY_BULLETS
 
         for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
         {
             if (playerBullets[i].isActive)
             {
-                playerBullets[i].pos.y -= playerBullets[i].speed * GetFrameTime();
+                playerBullets[i].pos.y += (playerBullets[i].velocityDir.y * playerBullets[i].speed) * GetFrameTime();
                 if (IsOutOfBounds(&playerBullets[i]))
                 {
                     playerBullets[i].isActive = false;
@@ -155,12 +221,38 @@ void GameLoop()
         {
             if (enemies[i].isActive)
             {
-                enemies[i].pos.y += enemies[i].speed * GetFrameTime();
+                enemies[i].pos.y += (enemies->velocityDir.y * enemies[i].speed) * GetFrameTime();
+
+                enemies[i].fireTimerHandle.timer += GetFrameTime();
+                if (enemies[i].fireTimerHandle.timer >= enemies[i].fireTimerHandle.interval)
+                {
+                    enemies[i].fireTimerHandle.timer = 0.0f;
+                    enemies[i].fireTimerHandle.TimerCallback(&enemies[i]);
+                }
                 if (IsOutOfBounds(&enemies[i]))
                 {
                     enemies[i].isActive = false;
                 }
             }
+        }
+
+        for (int i = 0; i < MAX_ENEMY_BULLET_POOL; i++)
+        {
+            if (enemyBullets[i].isActive)
+            {
+                enemyBullets[i].pos.y += (enemyBullets[i].velocityDir.y * enemyBullets[i].speed) * GetFrameTime();
+                if (IsOutOfBounds(&enemyBullets[i]))
+                {
+                    enemyBullets[i].isActive = false;
+                }
+            }
+        }
+
+        spawnEnemy1TimerHandle.timer += GetFrameTime();
+        if (spawnEnemy1TimerHandle.timer >= spawnEnemy1TimerHandle.interval)
+        {
+            spawnEnemy1TimerHandle.timer = 0;
+            spawnEnemy1TimerHandle.TimerCallback(NULL);
         }
 
         // ANIMATIONS
@@ -174,69 +266,157 @@ void GameLoop()
                 UpdateAnimation2D(&enemies[i].anim);
             }
         }
+}
 
-        // PHYSICS        
+void UpdatePhysics()
+{
+        for (int i = 0; i < MAX_ENEMIES_POOL; i++)
+        {
+            if (enemies[i].isActive)
+            {
+                Vector2 playerPos = GetPositionWithOffest(&player);
+                Vector2 enemyPos = GetPositionWithOffest(&enemies[i]);
 
-        // DRAW
+                Rectangle playerRec = (Rectangle){playerPos.x, playerPos.y, player.width, player.height};
+                Rectangle enemyRect = (Rectangle){enemyPos.x, enemyPos.y, enemies[i].width, enemies[i].height};
+                if (CheckCollisionRecs(playerRec, enemyRect))
+                {
+                    enemies[i].isActive = false;
+                    AddScore(10);
+                    ReducePlayerEnergy(10);
+                    continue;
+                }
 
-        BeginDrawing();
+                for (int k = 0; k < MAX_PLAYER_BULLET_POOL; k++)
+                {
+                    if (playerBullets[k].isActive)
+                    {
+                        Vector2 playerBulletPos = GetPositionWithOffest(&playerBullets[k]);
 
-            ClearBackground(BLACK);
+                        Rectangle playerBulletRec = (Rectangle){playerBulletPos.x, playerBulletPos.y, playerBullets[k].width, playerBullets[k].height};
+                        if (CheckCollisionRecs(playerBulletRec, enemyRect))
+                        {
+                            TraceLog(LOG_INFO, "Collisione tra proiettile e nemico!");
+                            enemies[i].isActive = false;
+                            playerBullets[k].isActive = false;
 
-            // Draw Background
-            DrawTiledArea(*background1.texture, background1.posX, background1.posY, 20, 15);            
-            DrawTiledArea(*background2.texture, background2.posX, background2.posY, 20, 15);
-            
-            // Draw MiddleBackground
+                            AddScore(10);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
-            // Pawn
+        for (int i = 0; i < MAX_ENEMY_BULLET_POOL; i++)
+        {
+             if (enemyBullets[i].isActive)
+            {
+                Vector2 playerPos = GetPositionWithOffest(&player);
+                Vector2 enemyBulletPos = GetPositionWithOffest(&enemyBullets[i]);
 
+                Rectangle playerRec = (Rectangle){playerPos.x, playerPos.y, player.width, player.height};
+                Rectangle enemyBulletRect = (Rectangle){enemyBulletPos.x, enemyBulletPos.y, enemyBullets[i].width, enemyBullets[i].height};
+                if (CheckCollisionRecs(playerRec, enemyBulletRect))
+                {
+                    enemyBullets[i].isActive = false;
+                    ReducePlayerEnergy(10);
+                    continue;
+                }
+
+                for (int k = 0; k < MAX_PLAYER_BULLET_POOL; k++)
+                {
+                    if (playerBullets[k].isActive)
+                    {
+                        Vector2 playerBulletPos = GetPositionWithOffest(&playerBullets[k]);
+
+                        Rectangle playerBulletRec = (Rectangle){playerBulletPos.x, playerBulletPos.y, playerBullets[k].width, playerBullets[k].height};
+                        if (CheckCollisionRecs(playerBulletRec, enemyBulletRect))
+                        {
+                            enemyBullets[i].isActive = false;
+                            playerBullets[k].isActive = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+}
+
+void DrawGame()
+{      
+    BeginDrawing();
+
+        ClearBackground(BLACK);
+        // Draw Background
+        DrawTiledArea(*background1.texture, background1.posX, background1.posY, 20, 15);            
+        DrawTiledArea(*background2.texture, background2.posX, background2.posY, 20, 15);
+        DrawTexture(*island.texture, island.posX, island.posY, WHITE);
+        
+        // Draw MiddleBackground
+        if (player.isActive)
+        {
             DrawTextureRec(*player.texture, (Rectangle){player.anim.currentFrame * player.width, 0, player.width, player.height}, GetPositionWithOffest(&player), WHITE);
-
-            for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
+        }
+        for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
+        {
+            if (playerBullets[i].isActive)
             {
-                if (playerBullets[i].isActive)
-                {
-                    DrawTextureRec(*playerBullets[i].texture, (Rectangle){0, 0, 32, 32}, GetPositionWithOffest(&playerBullets[i]), WHITE);
-                }
+                DrawTextureRec(*playerBullets[i].texture, 
+                                (Rectangle){0, 0, playerBullets[i].width, playerBullets[i].height},
+                                GetPositionWithOffest(&playerBullets[i]), WHITE);
             }
-
-            for (int i = 0; i < MAX_ENEMIES_POOL; i++)
+        }
+        for (int i = 0; i < MAX_ENEMIES_POOL; i++)
+        {
+            if (enemies[i].isActive)
             {
-                if (enemies[i].isActive)
-                {
-                    DrawTextureRec(*enemies[i].texture, 
-                                    (Rectangle){enemies[i].anim.currentFrame * enemies->width, 0, enemies->width, enemies->height},
-                                    GetPositionWithOffest(&enemies[i]), 
-                                    WHITE);
-                }
+                DrawTextureRec(*enemies[i].texture, 
+                                (Rectangle){enemies[i].anim.currentFrame * enemies->width, 0, enemies->width, enemies->height},
+                                GetPositionWithOffest(&enemies[i]), 
+                                WHITE);
             }
+        }
+        for (int i = 0; i < MAX_ENEMY_BULLET_POOL; i++)
+        {
+            if (enemyBullets[i].isActive)
+            {
+                DrawTextureRec(*enemyBullets[i].texture, (Rectangle){0, 0, 32, 32}, GetPositionWithOffest(&enemyBullets[i]), WHITE);
+            }
+        }
+        DrawCircle((int)(GetScreenWidth() * 0.5f), (int)(GetScreenHeight() * 0.5f), 5, RED);
+        // HUD
+        DrawTexture(bottomTexture2D, 0, 404, WHITE);
+        DrawLineEx((Vector2){healthBar.posX, healthBar.posY}, (Vector2){healthBar.posX + (healthBar.lengthBar * healthBar.percent), healthBar.posY}, 11.5f, GREEN);
+        for (int i = 0; i < playerLife; i++)
+        {
+            DrawTexture(playerLifeTexture2D, 30 + (30 * i), GetRenderHeight() - 70.f, WHITE);
+        }
 
+        DrawText(TextFormat("%d", playerScore), 200, GetRenderHeight() - 40.f, 20, YELLOW);
 
-            DrawCircle((int)(GetScreenWidth() * 0.5f), (int)(GetScreenHeight() * 0.5f), 5, RED);
-
-            // HUD
-
-            DrawTexture(*bottomUI.texture, bottomUI.posX, bottomUI.posY, WHITE);
-
-        EndDrawing();
-    }
-
+    EndDrawing();
 
 }
 
 void UnloadGame()
 {
     UnloadTexture(backgroundTexture2D);
+    UnloadTexture(island1Texture2D);
+    UnloadTexture(island2Texture2D);
+    UnloadTexture(island3Texture2D);
     UnloadTexture(playerTexture2D);
     UnloadTexture(playerBulletTexture2D);
+    UnloadTexture(playerLifeTexture2D);
     UnloadTexture(enemy1Texture2D);
+    UnloadTexture(enemyBulletTexture2D);
     UnloadTexture(bottomTexture2D);
 
     UnloadMusicStream(backgroundMC);
 
     free(playerBullets);
     free(enemies);
+    free(enemyBullets);
 }
 
 void ShoutDown()
@@ -345,6 +525,9 @@ GameObject* CreatePlayerBulletArray(int size, Texture2D* texture)
     {
         GameObject* gameObject = &array[i];
         gameObject->pivotOffset = (Vector2){16, 16};
+        gameObject->velocityDir = (Vector2){0, -1};
+        gameObject->width = texture->width;
+        gameObject->height = texture->height;
         gameObject->isActive = false;
         gameObject->texture = texture;
         gameObject->speed = 500.0f;
@@ -354,6 +537,37 @@ GameObject* CreatePlayerBulletArray(int size, Texture2D* texture)
     }
 
     return array;
+}
+
+void AddScore(int AddToScore)
+{
+    playerScore += AddToScore;
+}
+
+void ReducePlayerEnergy(int Damage)
+{
+    playerEnergy -= Damage;
+
+    if (playerEnergy <= 0)
+    {
+        DecrementPlayerLife();
+        playerEnergy = MAX_PLAYER_ENERGY;
+    }
+    TraceLog(LOG_INFO, "Current player energy: %d", playerEnergy);
+    healthBar.percent = (float)((float)playerEnergy / MAX_PLAYER_ENERGY);
+}
+
+void DecrementPlayerLife()
+{
+    playerLife--;
+
+    if (playerLife < 0)
+    {
+        // TODO: Show HUD GAME OVER
+        // TODO: Start delay for restart GAME
+    }
+
+    // TODO: Update HUD player life
 }
 
 void FixPlayerPosition(GameObject* player)
@@ -395,7 +609,12 @@ GameObject* GetAvailableGameobject(GameObject* objects, int poolSize)
 bool IsOutOfBounds(GameObject* object)
 {  
     Vector2 pos_with_offset = GetPositionWithOffest(object);
-    if (pos_with_offset.y + object->pivotOffset.y >= -100 && pos_with_offset.y - object->pivotOffset.y <= GetScreenHeight() - 76)
+    if (object->velocityDir.y > 0 && pos_with_offset.y - object->pivotOffset.y <= GetScreenHeight() - 76)
+    {
+        return false;
+    }
+
+    if (object->velocityDir.y < 0 && pos_with_offset.y + object->pivotOffset.y >= 0)
     {
         return false;
     }
@@ -417,6 +636,7 @@ GameObject* CreateEnemies(int size, Texture2D* texture)
     {
         GameObject* gameObject = &array[i];
         gameObject->pivotOffset = (Vector2){16, 16};
+        gameObject->velocityDir = (Vector2){0, 1};
         gameObject->isActive = false;
         gameObject->texture = texture;
         gameObject->width = texture->width / 3;
@@ -426,9 +646,56 @@ GameObject* CreateEnemies(int size, Texture2D* texture)
         gameObject->collisionType = Enemy;
         AddCollisionType(gameObject, Player);
         AddCollisionType(gameObject, PlayerBullet);
+        gameObject->fireTimerHandle.interval = 1.5f;
+        gameObject->fireTimerHandle.timer = 0.0f;
+        gameObject->fireTimerHandle.TimerCallback = EnemyFire;
     }
 
     return array;
+}
+
+GameObject* CreateEnemyBulletArray(int size, Texture2D* texture)
+{
+        GameObject* array = (GameObject*)malloc(size * sizeof(GameObject));
+
+    if (array == NULL)
+    {
+        TraceLog(LOG_ERROR, "ERROR: memory allocation failed!\n");
+        exit(1);
+    }
+
+    for (int i = 0; i < size; i++)
+    {
+        GameObject* gameObject = &array[i];
+        gameObject->pivotOffset = (Vector2){16, 16};
+        gameObject->velocityDir = (Vector2){0, 1};
+        gameObject->width = texture->width;
+        gameObject->height = texture->height;
+        gameObject->isActive = false;
+        gameObject->texture = texture;
+        gameObject->speed = 350.0f;
+        gameObject->collisionType = EnemyBullet;
+        AddCollisionType(gameObject, PlayerBullet);
+        AddCollisionType(gameObject, Player);
+    }
+
+    return array;
+}
+
+void EnemyFire(void* owner)
+{
+    GameObject* ownerEnemy = (GameObject*)owner;
+    GameObject* bulletEnemy = GetAvailableGameobject(enemyBullets, MAX_ENEMY_BULLET_POOL);
+    bulletEnemy->pos.x = ownerEnemy->pos.x;
+    bulletEnemy->pos.y = ownerEnemy->pos.y + ownerEnemy->pivotOffset.y;
+}
+
+void SpawnEnemy()
+{
+    TraceLog(LOG_INFO, "Pressed spawn enemy button!");
+    GameObject* enemy = GetAvailableGameobject(enemies, MAX_ENEMIES_POOL);
+    enemy->pos.x = GetRandomValue(50, GetScreenWidth() - 50);
+    enemy->pos.y = -40.f;
 }
 
 Vector2 NomalizeVector2(Vector2* vector)
@@ -441,6 +708,26 @@ Vector2 NomalizeVector2(Vector2* vector)
         vectorNomelaze.y = vector->y / magnitude;
     }
 
-
     return vectorNomelaze;
+}
+
+void ResetIsland()
+{
+    island.posY = -70;
+    island.posX = GetRandomValue(80, GetScreenWidth() - 80);
+    int randomIsland = GetRandomValue(0, 2);
+    switch (randomIsland)
+    {
+    case 0:
+        island.texture = &island1Texture2D;
+        break;
+
+    case 1:
+        island.texture = &island2Texture2D;
+        break;
+
+    case 2:
+        island.texture = &island3Texture2D;
+        break;
+    }
 }
