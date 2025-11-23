@@ -6,6 +6,8 @@
 #define MAX_PLAYER_BULLET_POOL 20
 #define MAX_ENEMIES_POOL 20
 #define MAX_ENEMY_BULLET_POOL 60
+#define MAX_ENEMY_EXPLOSION_POOL 10
+
 #define SCROLLING_BACKGROUND_SPEED 80.0f
 
 #define MAX_PLAYER_ENERGY 100
@@ -19,24 +21,34 @@ static int screenWidth = 640;
 static int screenHeight = 480;
 
 static Texture2D backgroundTexture2D;
+
 static Texture2D island1Texture2D;
 static Texture2D island2Texture2D;
 static Texture2D island3Texture2D;
+
 static Texture2D playerTexture2D;
+static Texture2D playerExplosionTexture2D;
 static Texture2D playerBulletTexture2D;
 static Texture2D playerLifeTexture2D;
+
 static Texture2D bottomTexture2D;
+
 static Texture2D enemy1Texture2D;
 static Texture2D enemyBulletTexture2D;
+static Texture2D enemyExplosionTexture2D;
 
 static int playerEnergy;
 static int playerLife;
 static int playerScore;
 
 static GameObject player;
-static GameObject* playerBullets;
-static GameObject* enemies;
-static GameObject* enemyBullets;
+static GameObject playerExplosion;
+static aiv_vector_t playerBullets;
+
+static aiv_vector_t enemies;
+static aiv_vector_t enemyBullets;
+static aiv_vector_t enemyExplosions;
+
 
 static ScrollableObject background1;
 static ScrollableObject background2;
@@ -49,6 +61,8 @@ static TimerHandle islandTimerHandle;
 static WidgetBar healthBar;
 
 static Music backgroundMC;
+static Sound playerExplosionSFX;
+static Sound enemyExplosionSFX;
 
 
 int main(void)
@@ -74,11 +88,16 @@ void InitGame()
     island1Texture2D = LoadTexture("assets/map/island1.png");
     island2Texture2D = LoadTexture("assets/map/island2.png");
     island3Texture2D = LoadTexture("assets/map/island3.png");
+
     playerTexture2D = LoadTexture("assets/player/myplane_strip3.png");
+    playerExplosionTexture2D = LoadTexture("assets/player/explosion2_strip7.png");
     playerBulletTexture2D = LoadTexture("assets/player/bullet.png");
     playerLifeTexture2D = LoadTexture("assets/ui/life.png");
+
     enemy1Texture2D = LoadTexture("assets/enemy/enemy1_strip3.png");
     enemyBulletTexture2D = LoadTexture("assets/enemy/enemybullet1.png");
+    enemyExplosionTexture2D = LoadTexture("assets/enemy/explosion1_strip6.png");
+
     bottomTexture2D = LoadTexture("assets/ui/bottom.png");
 
     background1.texture = &backgroundTexture2D;
@@ -96,22 +115,29 @@ void InitGame()
     playerLife = MAX_PLAYER_LIFE;
     playerScore = 0;
 
-    player.isActive = true;
     player.texture = &playerTexture2D;
-    player.pos = (Vector2){ GetScreenWidth() * 0.5f, GetScreenHeight() * 0.5f };
     player.pivotOffset = (Vector2){(float)playerTexture2D.height  * 0.5f, (float)playerTexture2D.height * 0.5f};
     player.velocityDir = (Vector2){0, 0};
     player.width = 65;
     player.height = 65;
     player.anim = CreateAnimation2D(3, 8, true);
-    player.speed = 150.0f;
-    player.collisionType = Player;
-    AddCollisionType(&player, Enemy);
-    AddCollisionType(&player, EnemyBullet);
+    player.speed = 200.0f;
+    // player.collisionType = E_Player;
+    // AddCollisionType(&player, E_Enemy);
+    // AddCollisionType(&player, E_EnemyBullet);
+    RespawnPlayer();
 
-    playerBullets = CreatePlayerBulletArray(MAX_PLAYER_BULLET_POOL, &playerBulletTexture2D);
-    enemies = CreateEnemies(MAX_ENEMIES_POOL, &enemy1Texture2D);
-    enemyBullets = CreateEnemyBulletArray(MAX_ENEMY_BULLET_POOL, &enemyBulletTexture2D);
+    playerExplosion.isActive = false;
+    playerExplosion.texture = &playerExplosionTexture2D;
+    playerExplosion.width = playerExplosionTexture2D.height;
+    playerExplosion.height = playerExplosionTexture2D.height;
+    playerExplosion.pivotOffset = (Vector2){playerExplosion.width * 0.5f, playerExplosion.height * 0.5f};
+    playerExplosion.anim = CreateAnimation2D(playerExplosionTexture2D.width / playerExplosionTexture2D.height, 8, false); 
+
+    CreatePlayerBulletArray();
+    CreateEnemies();
+    CreateEnemyBulletArray();
+    CreateEnemyExplosionArray();
 
     spawnEnemy1TimerHandle = (TimerHandle){0.0f, 2.0f, SpawnEnemy};
 
@@ -123,6 +149,12 @@ void InitGame()
     backgroundMC = LoadMusicStream("assets/audio/background.mp3");
     PlayMusicStream(backgroundMC);
     SetMusicVolume(backgroundMC, 0.25f);
+
+    playerExplosionSFX = LoadSound("assets/audio/snd_explosion2.wav");
+    SetSoundVolume(playerExplosionSFX, 0.25f);
+
+    enemyExplosionSFX = LoadSound("assets/audio/snd_explosion1.wav");
+    SetSoundVolume(enemyExplosionSFX, 0.25f);
 }
 
 void GameLoop()
@@ -157,7 +189,8 @@ void HandlePlayerInput()
     if (IsKeyPressed(KEY_SPACE))
     {
         TraceLog(LOG_INFO, "Pressed fire button!");
-        GameObject* bullet = GetAvailableGameobject(playerBullets, MAX_PLAYER_BULLET_POOL);
+        GameObject* bullet =  GetAvailableGameobject(&playerBullets);
+        bullet->isActive = true;
         bullet->pos = player.pos;
         bullet->pos.y -= player.pivotOffset.y;
     }
@@ -168,10 +201,10 @@ void UpdateGame()
 {
       // MUSIC
 
-        // if (IsMusicStreamPlaying(backgroundMC))
-        // {
-        //     UpdateMusicStream(backgroundMC);
-        // }
+        if (IsMusicStreamPlaying(backgroundMC))
+        {
+            UpdateMusicStream(backgroundMC);
+        }
         
         // BACKGROUND 
         
@@ -202,48 +235,77 @@ void UpdateGame()
         player.pos.y += (player.velocityDir.y * player.speed) * GetFrameTime();
 
         FixPlayerPosition(&player);
+        UpdateAnimation2D(&player.anim);
+
+        if (!player.isActive)
+        {
+            bool isFinished = UpdateAnimation2D(&playerExplosion.anim);
+
+            if (isFinished)
+            {
+                playerExplosion.isActive = false;
+                RespawnPlayer();
+            }
+        }
 
         // PLAYER_BULLETS, ENEMIES AND ENEMY_BULLETS
 
         for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
         {
-            if (playerBullets[i].isActive)
+            GameObject* playerBullet = (GameObject*)playerBullets.items[i];
+            if (playerBullet->isActive)
             {
-                playerBullets[i].pos.y += (playerBullets[i].velocityDir.y * playerBullets[i].speed) * GetFrameTime();
-                if (IsOutOfBounds(&playerBullets[i]))
+                playerBullet->pos.y += (playerBullet->velocityDir.y * playerBullet->speed) * GetFrameTime();
+                if (IsOutOfBounds(playerBullet))
                 {
-                    playerBullets[i].isActive = false;
+                    playerBullet->isActive = false;
                 }
             }
         }
 
         for (int i = 0; i < MAX_ENEMIES_POOL; i++)
         {
-            if (enemies[i].isActive)
+            GameObject* enemy = aiv_vector_at(&enemies, i);
+            if (enemy->isActive)
             {
-                enemies[i].pos.y += (enemies->velocityDir.y * enemies[i].speed) * GetFrameTime();
+                enemy->pos.y += (enemy->velocityDir.y * enemy->speed) * GetFrameTime();
+                UpdateAnimation2D(&enemy->anim);
 
-                enemies[i].fireTimerHandle.timer += GetFrameTime();
-                if (enemies[i].fireTimerHandle.timer >= enemies[i].fireTimerHandle.interval)
+                enemy->fireTimerHandle.timer += GetFrameTime();
+                if (enemy->fireTimerHandle.timer >= enemy->fireTimerHandle.interval)
                 {
-                    enemies[i].fireTimerHandle.timer = 0.0f;
-                    enemies[i].fireTimerHandle.TimerCallback(&enemies[i]);
+                    enemy->fireTimerHandle.timer = 0.0f;
+                    enemy->fireTimerHandle.TimerCallback(enemy);
                 }
-                if (IsOutOfBounds(&enemies[i]))
+                if (IsOutOfBounds(enemy))
                 {
-                    enemies[i].isActive = false;
+                    enemy->isActive = false;
                 }
             }
         }
 
         for (int i = 0; i < MAX_ENEMY_BULLET_POOL; i++)
         {
-            if (enemyBullets[i].isActive)
+            GameObject* enemyBullet = aiv_vector_at(&enemyBullets, i);
+            if (enemyBullet->isActive)
             {
-                enemyBullets[i].pos.y += (enemyBullets[i].velocityDir.y * enemyBullets[i].speed) * GetFrameTime();
-                if (IsOutOfBounds(&enemyBullets[i]))
+                enemyBullet->pos.y += (enemyBullet->velocityDir.y * enemyBullet->speed) * GetFrameTime();
+                if (IsOutOfBounds(enemyBullet))
                 {
-                    enemyBullets[i].isActive = false;
+                    enemyBullet->isActive = false;
+                }
+            }
+        }
+
+        for (int i = 0; i < MAX_ENEMY_EXPLOSION_POOL; i++)
+        {
+            GameObject* enemyExplosion = aiv_vector_at(&enemyExplosions, i);
+            if (enemyExplosion->isActive)
+            {
+                bool isFinished = UpdateAnimation2D(&enemyExplosion->anim);
+                if (isFinished)
+                {
+                    enemyExplosion->isActive = false;
                 }
             }
         }
@@ -251,20 +313,9 @@ void UpdateGame()
         spawnEnemy1TimerHandle.timer += GetFrameTime();
         if (spawnEnemy1TimerHandle.timer >= spawnEnemy1TimerHandle.interval)
         {
+            spawnEnemy1TimerHandle.interval = GetRandomFloatValue(2.5f, 4.0f);
             spawnEnemy1TimerHandle.timer = 0;
             spawnEnemy1TimerHandle.TimerCallback(NULL);
-        }
-
-        // ANIMATIONS
-
-        UpdateAnimation2D(&player.anim);
-
-        for (int i = 0; i < MAX_ENEMIES_POOL; i++)
-        {
-            if (enemies[i].isActive)
-            {
-                UpdateAnimation2D(&enemies[i].anim);
-            }
         }
 }
 
@@ -272,16 +323,18 @@ void UpdatePhysics()
 {
         for (int i = 0; i < MAX_ENEMIES_POOL; i++)
         {
-            if (enemies[i].isActive)
+            GameObject* enemy = aiv_vector_at(&enemies, i);
+            if (enemy->isActive)
             {
                 Vector2 playerPos = GetPositionWithOffest(&player);
-                Vector2 enemyPos = GetPositionWithOffest(&enemies[i]);
+                Vector2 enemyPos = GetPositionWithOffest(enemy);
 
                 Rectangle playerRec = (Rectangle){playerPos.x, playerPos.y, player.width, player.height};
-                Rectangle enemyRect = (Rectangle){enemyPos.x, enemyPos.y, enemies[i].width, enemies[i].height};
+                Rectangle enemyRect = (Rectangle){enemyPos.x, enemyPos.y, enemy->width, enemy->height};
                 if (CheckCollisionRecs(playerRec, enemyRect))
                 {
-                    enemies[i].isActive = false;
+                    enemy->isActive = false;
+                    PlayEnemyExplosion(enemy);
                     AddScore(10);
                     ReducePlayerEnergy(10);
                     continue;
@@ -289,16 +342,18 @@ void UpdatePhysics()
 
                 for (int k = 0; k < MAX_PLAYER_BULLET_POOL; k++)
                 {
-                    if (playerBullets[k].isActive)
-                    {
-                        Vector2 playerBulletPos = GetPositionWithOffest(&playerBullets[k]);
+                    GameObject* playerBullet = aiv_vector_at(&playerBullets, k);
 
-                        Rectangle playerBulletRec = (Rectangle){playerBulletPos.x, playerBulletPos.y, playerBullets[k].width, playerBullets[k].height};
+                    if (playerBullet->isActive)
+                    {
+                        Vector2 playerBulletPos = GetPositionWithOffest(playerBullet);
+
+                        Rectangle playerBulletRec = (Rectangle){playerBulletPos.x, playerBulletPos.y, playerBullet->width, playerBullet->height};
                         if (CheckCollisionRecs(playerBulletRec, enemyRect))
                         {
-                            TraceLog(LOG_INFO, "Collisione tra proiettile e nemico!");
-                            enemies[i].isActive = false;
-                            playerBullets[k].isActive = false;
+                            enemy->isActive = false;
+                            PlayEnemyExplosion(enemy);
+                            playerBullet->isActive = false;
 
                             AddScore(10);
                             break;
@@ -310,31 +365,34 @@ void UpdatePhysics()
 
         for (int i = 0; i < MAX_ENEMY_BULLET_POOL; i++)
         {
-             if (enemyBullets[i].isActive)
+            GameObject* enemyBullet = aiv_vector_at(&enemyBullets, i);
+             if (enemyBullet->isActive)
             {
                 Vector2 playerPos = GetPositionWithOffest(&player);
-                Vector2 enemyBulletPos = GetPositionWithOffest(&enemyBullets[i]);
+                Vector2 enemyBulletPos = GetPositionWithOffest(enemyBullet);
 
                 Rectangle playerRec = (Rectangle){playerPos.x, playerPos.y, player.width, player.height};
-                Rectangle enemyBulletRect = (Rectangle){enemyBulletPos.x, enemyBulletPos.y, enemyBullets[i].width, enemyBullets[i].height};
+                Rectangle enemyBulletRect = (Rectangle){enemyBulletPos.x, enemyBulletPos.y, enemyBullet->width, enemyBullet->height};
                 if (CheckCollisionRecs(playerRec, enemyBulletRect))
                 {
-                    enemyBullets[i].isActive = false;
+                    enemyBullet->isActive = false;
                     ReducePlayerEnergy(10);
                     continue;
                 }
 
                 for (int k = 0; k < MAX_PLAYER_BULLET_POOL; k++)
                 {
-                    if (playerBullets[k].isActive)
-                    {
-                        Vector2 playerBulletPos = GetPositionWithOffest(&playerBullets[k]);
+                    GameObject* playerBullet = aiv_vector_at(&playerBullets, k);
 
-                        Rectangle playerBulletRec = (Rectangle){playerBulletPos.x, playerBulletPos.y, playerBullets[k].width, playerBullets[k].height};
+                    if (playerBullet->isActive)
+                    {
+                        Vector2 playerBulletPos = GetPositionWithOffest(playerBullet);
+
+                        Rectangle playerBulletRec = (Rectangle){playerBulletPos.x, playerBulletPos.y, playerBullet->width, playerBullet->height};
                         if (CheckCollisionRecs(playerBulletRec, enemyBulletRect))
                         {
-                            enemyBullets[i].isActive = false;
-                            playerBullets[k].isActive = false;
+                            enemyBullet->isActive = false;
+                            playerBullet->isActive = false;
                             break;
                         }
                     }
@@ -358,33 +416,61 @@ void DrawGame()
         {
             DrawTextureRec(*player.texture, (Rectangle){player.anim.currentFrame * player.width, 0, player.width, player.height}, GetPositionWithOffest(&player), WHITE);
         }
+
+        if (playerExplosion.isActive)
+        {
+            DrawTextureRec(*playerExplosion.texture,
+                            (Rectangle){playerExplosion.anim.currentFrame * playerExplosion.width, 0, playerExplosion.width, playerExplosion.height},
+                            GetPositionWithOffest(&playerExplosion), WHITE);
+        }
+
         for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
         {
-            if (playerBullets[i].isActive)
+            GameObject* playerBullet = (GameObject*)playerBullets.items[i];
+            
+            if (playerBullet->isActive)
             {
-                DrawTextureRec(*playerBullets[i].texture, 
-                                (Rectangle){0, 0, playerBullets[i].width, playerBullets[i].height},
-                                GetPositionWithOffest(&playerBullets[i]), WHITE);
+                DrawTextureRec(*playerBullet->texture, 
+                                (Rectangle){0, 0, playerBullet->width, playerBullet->height},
+                                GetPositionWithOffest(playerBullet), WHITE);
             }
         }
+
         for (int i = 0; i < MAX_ENEMIES_POOL; i++)
         {
-            if (enemies[i].isActive)
+             GameObject* enemy = aiv_vector_at(&enemies, i);
+            if (enemy->isActive)
             {
-                DrawTextureRec(*enemies[i].texture, 
-                                (Rectangle){enemies[i].anim.currentFrame * enemies->width, 0, enemies->width, enemies->height},
-                                GetPositionWithOffest(&enemies[i]), 
+                DrawTextureRec(*enemy->texture, 
+                                (Rectangle){enemy->anim.currentFrame * enemy->width, 0, enemy->width, enemy->height},
+                                GetPositionWithOffest(enemy), 
                                 WHITE);
             }
         }
+
         for (int i = 0; i < MAX_ENEMY_BULLET_POOL; i++)
         {
-            if (enemyBullets[i].isActive)
+            GameObject* enemyBullet = aiv_vector_at(&enemyBullets, i);
+            if (enemyBullet->isActive)
             {
-                DrawTextureRec(*enemyBullets[i].texture, (Rectangle){0, 0, 32, 32}, GetPositionWithOffest(&enemyBullets[i]), WHITE);
+                DrawTextureRec(*enemyBullet->texture, (Rectangle){0, 0, enemyBullet->width, enemyBullet->height}, GetPositionWithOffest(enemyBullet), WHITE);
             }
         }
-        DrawCircle((int)(GetScreenWidth() * 0.5f), (int)(GetScreenHeight() * 0.5f), 5, RED);
+
+        for (int i = 0; i < MAX_ENEMY_EXPLOSION_POOL; i++)
+        {
+            GameObject* enemyExplosion = aiv_vector_at(&enemyExplosions, i);
+            if (enemyExplosion->isActive)
+            {
+                DrawTextureRec(*enemyExplosion->texture, 
+                                (Rectangle){enemyExplosion->anim.currentFrame * enemyExplosion->width, 0, enemyExplosion->width, enemyExplosion->height}, 
+                                GetPositionWithOffest(enemyExplosion), 
+                                WHITE);
+            }
+        }
+        
+        // DrawCircle((int)(GetScreenWidth() * 0.5f), (int)(GetScreenHeight() * 0.5f), 5, RED);
+
         // HUD
         DrawTexture(bottomTexture2D, 0, 404, WHITE);
         DrawLineEx((Vector2){healthBar.posX, healthBar.posY}, (Vector2){healthBar.posX + (healthBar.lengthBar * healthBar.percent), healthBar.posY}, 11.5f, GREEN);
@@ -393,7 +479,7 @@ void DrawGame()
             DrawTexture(playerLifeTexture2D, 30 + (30 * i), GetRenderHeight() - 70.f, WHITE);
         }
 
-        DrawText(TextFormat("%d", playerScore), 200, GetRenderHeight() - 40.f, 20, YELLOW);
+        DrawText(TextFormat("%04d", playerScore), 180, GetRenderHeight() - 40.f, 20, YELLOW);
 
     EndDrawing();
 
@@ -406,17 +492,23 @@ void UnloadGame()
     UnloadTexture(island2Texture2D);
     UnloadTexture(island3Texture2D);
     UnloadTexture(playerTexture2D);
+    UnloadTexture(playerExplosionTexture2D);
     UnloadTexture(playerBulletTexture2D);
     UnloadTexture(playerLifeTexture2D);
     UnloadTexture(enemy1Texture2D);
     UnloadTexture(enemyBulletTexture2D);
+    UnloadTexture(enemyExplosionTexture2D);
     UnloadTexture(bottomTexture2D);
 
     UnloadMusicStream(backgroundMC);
 
-    free(playerBullets);
-    free(enemies);
-    free(enemyBullets);
+    UnloadSound(playerExplosionSFX);
+    UnloadSound(enemyExplosionSFX);
+
+    aiv_vector_destroy(&playerBullets);
+    aiv_vector_destroy(&enemies);
+    aiv_vector_destroy(&enemyBullets);
+    aiv_vector_destroy(&enemyExplosions);
 }
 
 void ShoutDown()
@@ -424,7 +516,6 @@ void ShoutDown()
     UnloadGame();
     CloseWindow();
 }
-
 
 void DrawTiledArea(Texture2D texture, int startX, int startY, int tileCountX, int tileCountY)
 {
@@ -455,7 +546,7 @@ Animation2D CreateAnimation2D(int framesCount, int framesSpeed, bool isLooping)
     return anim;
 }
 
-void UpdateAnimation2D(Animation2D* anim)
+bool UpdateAnimation2D(Animation2D* anim)
 {
     anim->framesCounter++;
 
@@ -466,9 +557,19 @@ void UpdateAnimation2D(Animation2D* anim)
 
         if (anim->currentFrame > anim->framesCount - 1)
         {
-            anim->currentFrame = 0;
+            if (anim->isLooping)
+            {
+                anim->currentFrame = 0;
+            }
+            else
+            {
+                anim->currentFrame = -1;
+                return true;
+            }
         }
     }
+    
+    return false;
 }
 
 Vector2 GetInputDirection()
@@ -496,47 +597,41 @@ Vector2 GetInputDirection()
     return inputDirection;
 }
 
-void AddCollisionType(GameObject* object, CollisionType type)
-{
-    object->collisionMask |= (unsigned char)type;
-}
+// void AddCollisionType(GameObject* object, CollisionType type)
+// {
+//     object->collisionMask |= (unsigned char)type;
+// }
 
-bool CollisionTypeMatches(GameObject* object, CollisionType type)
-{
-    return false;
-}
+// bool CollisionTypeMatches(GameObject* object, CollisionType type)
+// {
+//     return false;
+// }
 
 Vector2 GetPositionWithOffest(GameObject* object)
 {
     return (Vector2){ object->pos.x - object->pivotOffset.x, object->pos.y - object->pivotOffset.y };
 }
 
-GameObject* CreatePlayerBulletArray(int size, Texture2D* texture)
+void CreatePlayerBulletArray()
 {
-    GameObject* array = (GameObject*)malloc(size * sizeof(GameObject));
+    playerBullets = aiv_vector_new();
 
-    if (array == NULL)
+    for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
     {
-        TraceLog(LOG_ERROR, "ERROR: memory allocation failed!\n");
-        exit(1);
-    }
-
-    for (int i = 0; i < size; i++)
-    {
-        GameObject* gameObject = &array[i];
-        gameObject->pivotOffset = (Vector2){16, 16};
+        GameObject* gameObject = (GameObject*)malloc(sizeof(GameObject));
+        gameObject->pivotOffset = (Vector2){playerBulletTexture2D.width * 0.5f, playerBulletTexture2D.height * 0.5f};
         gameObject->velocityDir = (Vector2){0, -1};
-        gameObject->width = texture->width;
-        gameObject->height = texture->height;
+        gameObject->width = playerBulletTexture2D.width;
+        gameObject->height = playerBulletTexture2D.height;
         gameObject->isActive = false;
-        gameObject->texture = texture;
+        gameObject->texture = &playerBulletTexture2D;
         gameObject->speed = 500.0f;
-        gameObject->collisionType = PlayerBullet;
-        AddCollisionType(gameObject, Enemy);
-        AddCollisionType(gameObject, EnemyBullet);
-    }
+        // gameObject->collisionType = E_PlayerBullet;
+        // AddCollisionType(gameObject, E_Enemy);
+        // AddCollisionType(gameObject, E_EnemyBullet);
 
-    return array;
+        aiv_vector_add(&playerBullets, gameObject);
+    }
 }
 
 void AddScore(int AddToScore)
@@ -550,6 +645,7 @@ void ReducePlayerEnergy(int Damage)
 
     if (playerEnergy <= 0)
     {
+        PlayPlayerExplosion();
         DecrementPlayerLife();
         playerEnergy = MAX_PLAYER_ENERGY;
     }
@@ -565,9 +661,8 @@ void DecrementPlayerLife()
     {
         // TODO: Show HUD GAME OVER
         // TODO: Start delay for restart GAME
+        TraceLog(LOG_INFO, "GAME OVER!");
     }
-
-    // TODO: Update HUD player life
 }
 
 void FixPlayerPosition(GameObject* player)
@@ -593,14 +688,32 @@ void FixPlayerPosition(GameObject* player)
     }
 }
 
-GameObject* GetAvailableGameobject(GameObject* objects, int poolSize)
+void RespawnPlayer()
 {
-    for (int i = 0; i < poolSize; i++)
-    {
-        if (objects[i].isActive) continue;
+    player.pos = (Vector2){ GetScreenWidth() * 0.5f, GetScreenHeight() * 0.5f };
+    player.isActive = true;
+}
 
-        objects[i].isActive = true;
-        return &objects[i];
+void PlayPlayerExplosion()
+{
+    player.isActive = false;
+
+    playerExplosion.pos = player.pos;
+    playerExplosion.anim.currentFrame = 0;
+    playerExplosion.isActive = true;
+
+    PlaySound(playerExplosionSFX);
+}
+
+GameObject* GetAvailableGameobject(aiv_vector_t* vector)
+{
+    for (int i = 0; i < vector->count; i++)
+    {
+        GameObject* object = aiv_vector_at(vector, i);
+        if (object->isActive) continue;
+
+        object->isActive = true;
+        return aiv_vector_at(vector, i);
     }
 
     return NULL;
@@ -622,80 +735,107 @@ bool IsOutOfBounds(GameObject* object)
     return true;
 }
 
-GameObject* CreateEnemies(int size, Texture2D* texture)
+void CreateEnemies()
 {
-    GameObject* array = (GameObject*)malloc(size * sizeof(GameObject));
+    enemies = aiv_vector_new();
 
-    if (array == NULL)
+    for (int i = 0; i < MAX_ENEMIES_POOL; i++)
     {
-        TraceLog(LOG_ERROR, "ERROR: memory allocation failed!\n");
-        exit(1);
-    }
-
-    for (int i = 0; i < size; i++)
-    {
-        GameObject* gameObject = &array[i];
+        GameObject* gameObject = malloc(sizeof(GameObject));
         gameObject->pivotOffset = (Vector2){16, 16};
         gameObject->velocityDir = (Vector2){0, 1};
         gameObject->isActive = false;
-        gameObject->texture = texture;
-        gameObject->width = texture->width / 3;
-        gameObject->height = texture->height;
+        gameObject->texture = &enemy1Texture2D;
+        gameObject->width = enemy1Texture2D.width / 3;
+        gameObject->height = enemy1Texture2D.height;
         gameObject->anim = CreateAnimation2D(3, 8, true);
         gameObject->speed = 100.0f;
-        gameObject->collisionType = Enemy;
-        AddCollisionType(gameObject, Player);
-        AddCollisionType(gameObject, PlayerBullet);
-        gameObject->fireTimerHandle.interval = 1.5f;
+        // gameObject->collisionType = E_Enemy;
+        // AddCollisionType(gameObject, E_Player);
+        // AddCollisionType(gameObject, E_PlayerBullet);
+        gameObject->fireTimerHandle.interval = GetRandomFloatValue(1.7f, 3.7f);
         gameObject->fireTimerHandle.timer = 0.0f;
         gameObject->fireTimerHandle.TimerCallback = EnemyFire;
-    }
 
-    return array;
+        aiv_vector_add(&enemies, gameObject);
+    }
 }
 
-GameObject* CreateEnemyBulletArray(int size, Texture2D* texture)
+void CreateEnemyBulletArray()
 {
-        GameObject* array = (GameObject*)malloc(size * sizeof(GameObject));
-
-    if (array == NULL)
+    enemyBullets = aiv_vector_new();
+    
+    for (int i = 0; i < MAX_ENEMY_BULLET_POOL; i++)
     {
-        TraceLog(LOG_ERROR, "ERROR: memory allocation failed!\n");
-        exit(1);
-    }
-
-    for (int i = 0; i < size; i++)
-    {
-        GameObject* gameObject = &array[i];
-        gameObject->pivotOffset = (Vector2){16, 16};
+        GameObject* gameObject = malloc(sizeof(GameObject));
+        gameObject->pivotOffset = (Vector2){enemyBulletTexture2D.width * 0.5f, enemyBulletTexture2D.height * 0.5f};
         gameObject->velocityDir = (Vector2){0, 1};
-        gameObject->width = texture->width;
-        gameObject->height = texture->height;
+        gameObject->width = enemyBulletTexture2D.width;
+        gameObject->height = enemyBulletTexture2D.height;
         gameObject->isActive = false;
-        gameObject->texture = texture;
+        gameObject->texture = &enemyBulletTexture2D;
         gameObject->speed = 350.0f;
-        gameObject->collisionType = EnemyBullet;
-        AddCollisionType(gameObject, PlayerBullet);
-        AddCollisionType(gameObject, Player);
-    }
+        // gameObject->collisionType = E_EnemyBullet;
+        // AddCollisionType(gameObject, E_PlayerBullet);
+        // AddCollisionType(gameObject, E_Player);
 
-    return array;
+        aiv_vector_add(&enemyBullets, gameObject);
+    }
+}
+
+void CreateEnemyExplosionArray()
+{
+    enemyExplosions = aiv_vector_new();
+
+    for (int i = 0; i < MAX_ENEMY_EXPLOSION_POOL; i++)
+    {
+        GameObject* gameObject = malloc(sizeof(GameObject));
+        gameObject->isActive = false;
+        gameObject->texture = &enemyExplosionTexture2D;
+        gameObject->width = enemyExplosionTexture2D.height;
+        gameObject->height = enemyExplosionTexture2D.height;
+        gameObject->pivotOffset = (Vector2){gameObject->width * 0.5f, gameObject->height * 0.5f};
+        gameObject->anim = CreateAnimation2D(enemyExplosionTexture2D.width / enemyExplosionTexture2D.height, 8, false);
+
+        aiv_vector_add(&enemyExplosions, gameObject);
+    }
 }
 
 void EnemyFire(void* owner)
 {
     GameObject* ownerEnemy = (GameObject*)owner;
-    GameObject* bulletEnemy = GetAvailableGameobject(enemyBullets, MAX_ENEMY_BULLET_POOL);
+    GameObject* bulletEnemy = GetAvailableGameobject(&enemyBullets);
     bulletEnemy->pos.x = ownerEnemy->pos.x;
     bulletEnemy->pos.y = ownerEnemy->pos.y + ownerEnemy->pivotOffset.y;
 }
 
 void SpawnEnemy()
 {
-    TraceLog(LOG_INFO, "Pressed spawn enemy button!");
-    GameObject* enemy = GetAvailableGameobject(enemies, MAX_ENEMIES_POOL);
-    enemy->pos.x = GetRandomValue(50, GetScreenWidth() - 50);
-    enemy->pos.y = -40.f;
+    int startX = GetRandomValue(50, GetScreenWidth() - 50);
+    int startY = -40.f;
+    int spawnAmount = GetRandomValue(2, 4);
+    bool spawnToLeft = startX > GetScreenWidth() * 0.5f;
+    int directionMultiplier = spawnToLeft ? -1 : 1;
+
+    for (int i = 0; i < spawnAmount; i++)
+    {
+        GameObject* enemy = GetAvailableGameobject(&enemies);
+        float xOffset = (enemy->width + 5) * i;
+        float yOffset = -enemy->height * i;
+        enemy->pos.x = startX + (xOffset * directionMultiplier);
+        enemy->pos.y = startY + yOffset;
+    }
+}
+
+void PlayEnemyExplosion(GameObject* owner)
+{
+    GameObject* enemyExplosion = GetAvailableGameobject(&enemyExplosions);
+
+    enemyExplosion->pos = owner->pos;
+    enemyExplosion->anim.currentFrame = 0;
+    enemyExplosion->isActive = true;
+
+    PlaySound(enemyExplosionSFX);
 }
 
 Vector2 NomalizeVector2(Vector2* vector)
@@ -730,4 +870,10 @@ void ResetIsland()
         island.texture = &island3Texture2D;
         break;
     }
+}
+
+float GetRandomFloatValue(float min, float max)
+{
+    float r = (float)rand()/(float)RAND_MAX;
+    return r * (max - min) + min;
 }

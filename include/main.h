@@ -2,14 +2,15 @@
 #define MAIN_H
 
 #include "raylib.h"
+#include "aiv_vector.h"
 
-typedef enum CollisionType
-{
-    Player = 1,
-    Enemy = 2,
-    EnemyBullet = 4,
-    PlayerBullet = 8
-}CollisionType;
+// typedef enum CollisionType
+// {
+//     E_Player = 1,
+//     E_Enemy = 2,
+//     E_EnemyBullet = 4,
+//     E_PlayerBullet = 8
+// }CollisionType;
 
 typedef struct ScrollableObject
 {
@@ -46,7 +47,7 @@ typedef struct GameObject
     Animation2D anim;
     float speed;
     unsigned char collisionMask;
-    CollisionType collisionType;
+    //CollisionType collisionType;
     TimerHandle fireTimerHandle;
 }GameObject;
 
@@ -75,38 +76,44 @@ void DrawTiledArea(Texture2D texture, int startX, int startY, int tileCountX, in
 
 // Animation
 Animation2D CreateAnimation2D(int framesCount, int framesSpeed, bool isLooping);
-void UpdateAnimation2D(Animation2D* anim);
+bool UpdateAnimation2D(Animation2D* anim);
 
 // Player 
 void AddScore(int AddToScore);
 void ReducePlayerEnergy(int Damage);
 void DecrementPlayerLife();
 void FixPlayerPosition(GameObject* player);
+void RespawnPlayer();
+void PlayPlayerExplosion();
 
 Vector2 GetInputDirection();
 
 // Physic
-void AddCollisionType(GameObject* object, CollisionType type);
-bool CollisionTypeMatches(GameObject* object, CollisionType type);
+// void AddCollisionType(GameObject* object, CollisionType type);
+// bool CollisionTypeMatches(GameObject* object, CollisionType type);
 
 void PlayerFire();
 
 void SetPosition(GameObject* object, Vector2 newPos);
 Vector2 GetPositionWithOffest(GameObject* object);
-GameObject* CreatePlayerBulletArray(int size, Texture2D* texture);
-GameObject* GetAvailableGameobject(GameObject* objects, int poolSize);
+void CreatePlayerBulletArray();
+GameObject* GetAvailableGameobject(aiv_vector_t* vector);
 bool IsOutOfBounds(GameObject* object);
 
 
 // Enemy
 
-GameObject* CreateEnemies(int size, Texture2D* texture);
-GameObject* CreateEnemyBulletArray(int size, Texture2D* texture);
+void CreateEnemies();
+void CreateEnemyBulletArray();
+void CreateEnemyExplosionArray();
 void EnemyFire(void* owner);
 void SpawnEnemy();
+void PlayEnemyExplosion(GameObject* owner);
 
 // Math
 Vector2 NomalizeVector2(Vector2* vector);
+
+float GetRandomFloatValue(float min, float max);
 
 void ResetIsland();
 
