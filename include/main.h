@@ -11,6 +11,12 @@
 //     E_EnemyBullet = 4,
 //     E_PlayerBullet = 8
 // }CollisionType;
+typedef enum GameState
+{
+    E_StateMenu,
+    E_StatePlaying,
+    E_StateGameOver
+}GameState;
 
 typedef struct ScrollableObject
 {
@@ -62,6 +68,7 @@ typedef struct WidgetBar
 
 
 void InitGame();
+void ResetGame();
 void GameLoop();
 void HandlePlayerInput();
 void UpdateGame();

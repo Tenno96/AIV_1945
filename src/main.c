@@ -20,6 +20,7 @@
 static int screenWidth = 640;
 static int screenHeight = 480;
 
+static Texture2D titleTexture2D;
 static Texture2D backgroundTexture2D;
 
 static Texture2D island1Texture2D;
@@ -64,6 +65,8 @@ static Music backgroundMC;
 static Sound playerExplosionSFX;
 static Sound enemyExplosionSFX;
 
+static GameState currenteGameState;
+
 
 int main(void)
 {
@@ -84,6 +87,7 @@ int main(void)
 
 void InitGame()
 {
+    titleTexture2D = LoadTexture("assets/ui/Title.png");
     backgroundTexture2D = LoadTexture("assets/map/water.png");
     island1Texture2D = LoadTexture("assets/map/island1.png");
     island2Texture2D = LoadTexture("assets/map/island2.png");
@@ -142,7 +146,7 @@ void InitGame()
     spawnEnemy1TimerHandle = (TimerHandle){0.0f, 2.0f, SpawnEnemy};
 
     healthBar.posX = 11;
-    healthBar.posY = GetRenderHeight() - 26.f;
+    healthBar.posY = GetScreenHeight() - 26.f;
     healthBar.percent = 1.0f;
     healthBar.lengthBar = 128.0f;
 
@@ -155,6 +159,46 @@ void InitGame()
 
     enemyExplosionSFX = LoadSound("assets/audio/snd_explosion1.wav");
     SetSoundVolume(enemyExplosionSFX, 0.25f);
+
+    currenteGameState = E_StateMenu;
+}
+
+void ResetGame()
+{
+    playerEnergy = MAX_PLAYER_ENERGY;
+    playerLife = MAX_PLAYER_LIFE;
+    playerScore = 0;
+
+    for (int i = 0; i < MAX_ENEMIES_POOL; i++)
+    {
+        GameObject* enemy = aiv_vector_at(&enemies, i);
+        if (enemy->isActive)
+        {
+            enemy->isActive = false;
+            enemy->anim.currentFrame = 0;
+            enemy->fireTimerHandle.timer = 0;
+        }
+    }
+
+    for (int i = 0; i < MAX_ENEMY_EXPLOSION_POOL; i++)
+    {
+        GameObject* explosion = aiv_vector_at(&enemyExplosions, i);
+        explosion->isActive = false;
+        explosion->anim.currentFrame = 0;
+    }
+
+    spawnEnemy1TimerHandle.timer = 0;
+    islandTimerHandle.timer = 0;
+
+    playerExplosion.isActive = false;
+    playerExplosion.anim.currentFrame = 0;
+
+    RespawnPlayer();
+
+    StopMusicStream(backgroundMC);
+    PlayMusicStream(backgroundMC);
+
+    currenteGameState = E_StatePlaying;
 }
 
 void GameLoop()
@@ -177,29 +221,47 @@ void GameLoop()
 
         DrawGame();
     }
-
-
 }
 
 void HandlePlayerInput()
 {
-    Vector2 inputDirection = GetInputDirection();
-    player.velocityDir = NomalizeVector2(&inputDirection);
-    
-    if (IsKeyPressed(KEY_SPACE))
+    switch (currenteGameState)
     {
-        TraceLog(LOG_INFO, "Pressed fire button!");
-        GameObject* bullet =  GetAvailableGameobject(&playerBullets);
-        bullet->isActive = true;
-        bullet->pos = player.pos;
-        bullet->pos.y -= player.pivotOffset.y;
-    }
+    case E_StateMenu:
+        if (IsKeyPressed(KEY_ENTER))
+        {
+            currenteGameState = E_StatePlaying;
+        }
+        break;
+    
+    case E_StatePlaying:
+        Vector2 inputDirection = GetInputDirection();
+        player.velocityDir = NomalizeVector2(&inputDirection);
+        
+        if (IsKeyPressed(KEY_SPACE))
+        {
+            TraceLog(LOG_INFO, "Pressed fire button!");
+            GameObject* bullet =  GetAvailableGameobject(&playerBullets);
+            bullet->isActive = true;
+            bullet->pos = player.pos;
+            bullet->pos.y -= player.pivotOffset.y;
+        }
+        break;
 
+    case E_StateGameOver:
+        if (IsKeyPressed(KEY_ENTER))
+        {
+            ResetGame();
+        }
+        break;
+    }
 }
 
 void UpdateGame()
 {
-      // MUSIC
+    if (currenteGameState == E_StatePlaying)
+    {
+        // MUSIC
 
         if (IsMusicStreamPlaying(backgroundMC))
         {
@@ -317,10 +379,13 @@ void UpdateGame()
             spawnEnemy1TimerHandle.timer = 0;
             spawnEnemy1TimerHandle.TimerCallback(NULL);
         }
+    }
 }
 
 void UpdatePhysics()
 {
+    if (currenteGameState == E_StatePlaying)
+    {
         for (int i = 0; i < MAX_ENEMIES_POOL; i++)
         {
             GameObject* enemy = aiv_vector_at(&enemies, i);
@@ -331,7 +396,7 @@ void UpdatePhysics()
 
                 Rectangle playerRec = (Rectangle){playerPos.x, playerPos.y, player.width, player.height};
                 Rectangle enemyRect = (Rectangle){enemyPos.x, enemyPos.y, enemy->width, enemy->height};
-                if (CheckCollisionRecs(playerRec, enemyRect))
+                if (CheckCollisionRecs(playerRec, enemyRect) && player.isActive)
                 {
                     enemy->isActive = false;
                     PlayEnemyExplosion(enemy);
@@ -373,7 +438,7 @@ void UpdatePhysics()
 
                 Rectangle playerRec = (Rectangle){playerPos.x, playerPos.y, player.width, player.height};
                 Rectangle enemyBulletRect = (Rectangle){enemyBulletPos.x, enemyBulletPos.y, enemyBullet->width, enemyBullet->height};
-                if (CheckCollisionRecs(playerRec, enemyBulletRect))
+                if (CheckCollisionRecs(playerRec, enemyBulletRect) && player.isActive)
                 {
                     enemyBullet->isActive = false;
                     ReducePlayerEnergy(10);
@@ -399,87 +464,105 @@ void UpdatePhysics()
                 }
             }
         }
+    }
 }
 
 void DrawGame()
 {      
     BeginDrawing();
-
         ClearBackground(BLACK);
-        // Draw Background
-        DrawTiledArea(*background1.texture, background1.posX, background1.posY, 20, 15);            
-        DrawTiledArea(*background2.texture, background2.posX, background2.posY, 20, 15);
-        DrawTexture(*island.texture, island.posX, island.posY, WHITE);
-        
-        // Draw MiddleBackground
-        if (player.isActive)
-        {
-            DrawTextureRec(*player.texture, (Rectangle){player.anim.currentFrame * player.width, 0, player.width, player.height}, GetPositionWithOffest(&player), WHITE);
-        }
 
-        if (playerExplosion.isActive)
+        switch (currenteGameState)
         {
-            DrawTextureRec(*playerExplosion.texture,
-                            (Rectangle){playerExplosion.anim.currentFrame * playerExplosion.width, 0, playerExplosion.width, playerExplosion.height},
-                            GetPositionWithOffest(&playerExplosion), WHITE);
-        }
-
-        for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
-        {
-            GameObject* playerBullet = (GameObject*)playerBullets.items[i];
+         case E_StateMenu:
+            DrawTexture(titleTexture2D, 0, 0, WHITE);
+            DrawText("Press Enter To Start Game", GetScreenWidth() * 0.2f, GetScreenHeight() * 0.5f, 30, YELLOW);
+            break;
             
-            if (playerBullet->isActive)
-            {
-                DrawTextureRec(*playerBullet->texture, 
-                                (Rectangle){0, 0, playerBullet->width, playerBullet->height},
-                                GetPositionWithOffest(playerBullet), WHITE);
-            }
-        }
+         case E_StatePlaying:
+                
+                // Draw Background
+                DrawTiledArea(*background1.texture, background1.posX, background1.posY, 20, 15);            
+                DrawTiledArea(*background2.texture, background2.posX, background2.posY, 20, 15);
+                DrawTexture(*island.texture, island.posX, island.posY, WHITE);
 
-        for (int i = 0; i < MAX_ENEMIES_POOL; i++)
-        {
-             GameObject* enemy = aiv_vector_at(&enemies, i);
-            if (enemy->isActive)
-            {
-                DrawTextureRec(*enemy->texture, 
-                                (Rectangle){enemy->anim.currentFrame * enemy->width, 0, enemy->width, enemy->height},
-                                GetPositionWithOffest(enemy), 
-                                WHITE);
-            }
-        }
+                // Draw MiddleBackground
+                if (player.isActive)
+                {
+                    DrawTextureRec(*player.texture, (Rectangle){player.anim.currentFrame * player.width, 0, player.width, player.height}, GetPositionWithOffest(&player), WHITE);
+                }
+            
+                if (playerExplosion.isActive)
+                {
+                    DrawTextureRec(*playerExplosion.texture,
+                                    (Rectangle){playerExplosion.anim.currentFrame * playerExplosion.width, 0, playerExplosion.width, playerExplosion.height},
+                                    GetPositionWithOffest(&playerExplosion), WHITE);
+                }
+            
+                for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
+                {
+                    GameObject* playerBullet = (GameObject*)playerBullets.items[i];
 
-        for (int i = 0; i < MAX_ENEMY_BULLET_POOL; i++)
-        {
-            GameObject* enemyBullet = aiv_vector_at(&enemyBullets, i);
-            if (enemyBullet->isActive)
-            {
-                DrawTextureRec(*enemyBullet->texture, (Rectangle){0, 0, enemyBullet->width, enemyBullet->height}, GetPositionWithOffest(enemyBullet), WHITE);
-            }
-        }
+                    if (playerBullet->isActive)
+                    {
+                        DrawTextureRec(*playerBullet->texture, 
+                                        (Rectangle){0, 0, playerBullet->width, playerBullet->height},
+                                        GetPositionWithOffest(playerBullet), WHITE);
+                    }
+                }
+            
+                for (int i = 0; i < MAX_ENEMIES_POOL; i++)
+                {
+                     GameObject* enemy = aiv_vector_at(&enemies, i);
+                    if (enemy->isActive)
+                    {
+                        DrawTextureRec(*enemy->texture, 
+                                        (Rectangle){enemy->anim.currentFrame * enemy->width, 0, enemy->width, enemy->height},
+                                        GetPositionWithOffest(enemy), 
+                                        WHITE);
+                    }
+                }
+            
+                for (int i = 0; i < MAX_ENEMY_BULLET_POOL; i++)
+                {
+                    GameObject* enemyBullet = aiv_vector_at(&enemyBullets, i);
+                    if (enemyBullet->isActive)
+                    {
+                        DrawTextureRec(*enemyBullet->texture, (Rectangle){0, 0, enemyBullet->width, enemyBullet->height}, GetPositionWithOffest(enemyBullet), WHITE);
+                    }
+                }
+            
+                for (int i = 0; i < MAX_ENEMY_EXPLOSION_POOL; i++)
+                {
+                    GameObject* enemyExplosion = aiv_vector_at(&enemyExplosions, i);
+                    if (enemyExplosion->isActive)
+                    {
+                        DrawTextureRec(*enemyExplosion->texture, 
+                                        (Rectangle){enemyExplosion->anim.currentFrame * enemyExplosion->width, 0, enemyExplosion->width, enemyExplosion->height}, 
+                                        GetPositionWithOffest(enemyExplosion), 
+                                        WHITE);
+                    }
+                }
 
-        for (int i = 0; i < MAX_ENEMY_EXPLOSION_POOL; i++)
-        {
-            GameObject* enemyExplosion = aiv_vector_at(&enemyExplosions, i);
-            if (enemyExplosion->isActive)
-            {
-                DrawTextureRec(*enemyExplosion->texture, 
-                                (Rectangle){enemyExplosion->anim.currentFrame * enemyExplosion->width, 0, enemyExplosion->width, enemyExplosion->height}, 
-                                GetPositionWithOffest(enemyExplosion), 
-                                WHITE);
-            }
+                // DrawCircle((int)(GetScreenWidth() * 0.5f), (int)(GetScreenHeight() * 0.5f), 5, RED);
+            
+                // HUD
+                DrawTexture(bottomTexture2D, 0, 404, WHITE);
+                DrawLineEx((Vector2){healthBar.posX, healthBar.posY}, (Vector2){healthBar.posX + (healthBar.lengthBar * healthBar.percent), healthBar.posY}, 11.5f, GREEN);
+                for (int i = 0; i < playerLife; i++)
+                {
+                    DrawTexture(playerLifeTexture2D, 30 + (30 * i), GetScreenHeight() - 70.f, WHITE);
+                }
+            
+                DrawText(TextFormat("%04d", playerScore), 180, GetScreenHeight() - 40.f, 20, YELLOW);
+            
+            break;
+            
+         case E_StateGameOver:
+                DrawText("GAME OVER!", GetScreenWidth() * 0.32f, GetScreenHeight() * 0.4f, 40, RED);
+                DrawText("Press Enter To Restart Game", GetScreenWidth() * 0.15f, GetScreenHeight() * 0.6f, 30, RED);
+            break;
         }
-        
-        // DrawCircle((int)(GetScreenWidth() * 0.5f), (int)(GetScreenHeight() * 0.5f), 5, RED);
-
-        // HUD
-        DrawTexture(bottomTexture2D, 0, 404, WHITE);
-        DrawLineEx((Vector2){healthBar.posX, healthBar.posY}, (Vector2){healthBar.posX + (healthBar.lengthBar * healthBar.percent), healthBar.posY}, 11.5f, GREEN);
-        for (int i = 0; i < playerLife; i++)
-        {
-            DrawTexture(playerLifeTexture2D, 30 + (30 * i), GetRenderHeight() - 70.f, WHITE);
-        }
-
-        DrawText(TextFormat("%04d", playerScore), 180, GetRenderHeight() - 40.f, 20, YELLOW);
 
     EndDrawing();
 
@@ -487,6 +570,7 @@ void DrawGame()
 
 void UnloadGame()
 {
+    UnloadTexture(titleTexture2D);
     UnloadTexture(backgroundTexture2D);
     UnloadTexture(island1Texture2D);
     UnloadTexture(island2Texture2D);
@@ -662,6 +746,7 @@ void DecrementPlayerLife()
         // TODO: Show HUD GAME OVER
         // TODO: Start delay for restart GAME
         TraceLog(LOG_INFO, "GAME OVER!");
+        currenteGameState = E_StateGameOver;
     }
 }
 
