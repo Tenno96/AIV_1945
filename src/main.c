@@ -50,7 +50,6 @@ static aiv_vector_t enemies;
 static aiv_vector_t enemyBullets;
 static aiv_vector_t enemyExplosions;
 
-
 static ScrollableObject background1;
 static ScrollableObject background2;
 
@@ -69,15 +68,13 @@ static GameState currenteGameState;
 
 
 int main(void)
-{
-    // Initialization
+{   
     InitWindow(screenWidth, screenHeight, "AIV - 1945");
-    InitAudioDevice();
-    SetTargetFPS(60);
-
     ChangeDirectory(GetApplicationDirectory());
     TraceLog(LOG_DEBUG, "Change directory to: %s", GetApplicationDirectory());
-
+    InitAudioDevice();
+    SetTargetFPS(60);
+    
     InitGame();
     GameLoop();
     ShoutDown();
@@ -161,6 +158,8 @@ void InitGame()
     SetSoundVolume(enemyExplosionSFX, 0.25f);
 
     currenteGameState = E_StateMenu;
+
+    TraceLog(LOG_INFO, "Guarda qui: %llu", sizeof(Animation2D));
 }
 
 void ResetGame()
@@ -185,6 +184,18 @@ void ResetGame()
         GameObject* explosion = aiv_vector_at(&enemyExplosions, i);
         explosion->isActive = false;
         explosion->anim.currentFrame = 0;
+    }
+
+    for (int i = 0; i < MAX_PLAYER_BULLET_POOL; i++)
+    {
+        GameObject* playerBullet = (GameObject*)playerBullets.items[i];
+        playerBullet->isActive = false;
+    }
+
+    for (int i = 0; i < MAX_ENEMY_BULLET_POOL; i++)
+    {
+        GameObject* enemyBullet = aiv_vector_at(&enemyBullets, i);
+        enemyBullet->isActive = false;
     }
 
     spawnEnemy1TimerHandle.timer = 0;
@@ -330,6 +341,7 @@ void UpdateGame()
             GameObject* enemy = aiv_vector_at(&enemies, i);
             if (enemy->isActive)
             {
+                enemy->pos.x += (enemy->velocityDir.x * enemy->speed) * GetFrameTime();
                 enemy->pos.y += (enemy->velocityDir.y * enemy->speed) * GetFrameTime();
                 UpdateAnimation2D(&enemy->anim);
 
@@ -901,12 +913,14 @@ void SpawnEnemy()
     int spawnAmount = GetRandomValue(2, 4);
     bool spawnToLeft = startX > GetScreenWidth() * 0.5f;
     int directionMultiplier = spawnToLeft ? -1 : 1;
+    float diractionVelocityX = GetRandomValue(0, 1) * directionMultiplier;
 
     for (int i = 0; i < spawnAmount; i++)
     {
         GameObject* enemy = GetAvailableGameobject(&enemies);
         float xOffset = (enemy->width + 5) * i;
         float yOffset = -enemy->height * i;
+        enemy->velocityDir.x = diractionVelocityX;
         enemy->pos.x = startX + (xOffset * directionMultiplier);
         enemy->pos.y = startY + yOffset;
     }

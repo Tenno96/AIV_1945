@@ -1,0 +1,1 @@
+clang -o .\bin\app.exe .\src\*.c -Iinclude -L.\lib -lraylibdll -laiv_vector
