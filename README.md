@@ -3,8 +3,7 @@ The game is written in C and developed using the Raylib library
 
 How To Play
 
-1. Download the bin folder.
-2. Run the .exe file to start the game --- no installation required.
+  1. Download the files at this link [https://drive.google.com/file/d/1kKdvbWyWvUaawBOeGT_dzYqKe2TyzT-_/view?usp=drive_link]
 
 Controls
 
