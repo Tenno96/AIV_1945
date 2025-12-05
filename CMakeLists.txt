@@ -1,11 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(AIV_1945 LANGUAGES C)
 
-include_directories(include)
-
 set(RAYLIB ${CMAKE_SOURCE_DIR}/lib/raylib.lib)
 set(AIV_VECTOR ${CMAKE_SOURCE_DIR}/lib/aiv_vector.lib)
-
 
 add_executable(GameApp src/main.c)
 target_include_directories(GameApp PRIVATE include)
